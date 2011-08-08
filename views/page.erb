@@ -1,0 +1,175 @@
+<html>
+  <head>
+    <script type="text/javascript" src="https://ajax.googleapis.com/ajax/libs/jquery/1.6.0/jquery.min.js"></script>
+    <script type="text/javascript" src="https://ajax.googleapis.com/ajax/libs/jqueryui/1.8.12/jquery-ui.min.js"></script>
+    <link type="text/css" rel="stylesheet" href="http://ajax.googleapis.com/ajax/libs/jqueryui/1.7.2/themes/smoothness/jquery-ui.css" />
+    <style type="text/css">
+      .ui-autocomplete.ui-menu {width: 40em; padding: 0.5em; }
+      .ui-menu-item { line-height: 0.85em; padding: 0.25em; }
+      .ui-state-hover { border: 0px !important; padding: 0.25em 0em }
+      ul { list-style: none }
+      body { font: 12pt Georgia ; color: #303030; width: 75%; margin: auto }
+      h1 { font-size: 24pt ; text-align: center ; padding: 0.5em ; border: 0pt ; margin: 0pt }
+      h2 { font-size: 18pt ; text-align: center ; padding: 0em 0em 1em 0em ; border-bottom: 1px solid #09F ; margin: 0em 0em 1em 0em ; font-weight: normal ; font-style: italic }
+      #word-a,#word-b,#word-c,#word-d { font: 12pt Georgia; width: 1.5in }
+      #autocomplete { margin: 0pt }
+      #vessel { width: 5in; padding-bottom: 0.5in }
+      #vessel.more-math { width: 100% }
+      #vessel .more-math { display: none }
+      #vessel .word-stat { display: inline-block }
+      #vessel .less-math { display: inline-block; padding-right: 0.25em }
+      #vessel.more-math .word-stat { width: 100%; position: relative; display: block; height: 52px }
+      #vessel.more-math .less-math { padding: 0em; width: 20%; display: block; position: absolute; left: 0pt }
+      #vessel.more-math .more-math { display: block; width: 80%; right: 0pt; position: absolute; }
+      #vessel.more-math .histo { width: 100%; white-space: nowrap; height: 10px }  /* nowrap because we need pixel dimensions, which we only start to calculate without scrollbars */
+      #vessel.more-math .fanout { border-left: 0px solid white; border-right: 0px solid white; border-bottom: 40px solid #CCCCCC }
+      .slug { display: inline-block; height: 100% }
+    </style>
+    <script>
+      colors = ["#F7E4A2","#A7BD5B","#DC574E","#8DC7B8","#ED9355"] // refreshing melon: kuler.adobe.com/#themeID/1386725
+      function shuffle(array) {
+        var j; var swap; var a = array.slice(); var i = a.length;
+        while(i--) {
+          j = parseInt(Math.random() * i);
+          swap = a[i];
+          a[i] = a[j];
+          a[j] = swap;
+        }
+        return a;
+      } // kudos to fischer and yates
+      function eachk(lst,fk,k) {
+        setTimeout(function() { lst.length == 0 ? k() : fk(lst[0],function() { eachk(lst.slice(1),fk,k) }) },0); // JS stacks can be quite shallow, so setTimeout 0
+      }
+      $.foldl = function(f,z,lst) { $.each(lst, function(i,e) { z = f(z,e) }) ; return z }
+      $.sum = function(lst) { return $.foldl(function(a,b) { return a+b },0,lst) }
+      $.fst = function(pair) { return pair[0] }
+      $.snd = function(pair) { return pair[1] }
+      $.divWithClass = function(name) { return $(document.createElement("div")).addClass(name) }
+
+      function fifthWordsK(a,b,c,d,usgb,year,k) {
+        $.ajax('/5gram-histo', {data: {a: a, b: b, c: c, d: d, usgb: usgb, year: year}, dataType: 'json', 'success': function(j) { k(j) }});
+      }
+      function writeNextWordK(a,b,c,d,usgb,year,randomized,kTupleFail) {
+        fifthWordsK(a,b,c,d,usgb,year,function(es) {
+          eachk(randomized ? shuffle(es) : es, function(e,kWordFail) {
+                  eword = e[0];
+                  pushToDisplay(eword,es);
+                  if(!timeToStop()) writeNextWordK(b,c,d,eword,usgb,year,randomized,function() { popFromDisplayK(kWordFail); });
+                }, kTupleFail);
+        });
+      }
+
+      function pixelwidths(wordcountpairs) {
+        var counts = $.map(wordcountpairs, $.snd);
+        var remainingCounts = $.sum(counts);
+        var mathVizPercentageOfBody = 80;
+        var remainingPixels = Math.floor($(document.body).width() * mathVizPercentageOfBody / 100);
+        return $.map(counts.reverse(), function(c) {
+                       var countwidth = Math.max(1, Math.round(c*remainingPixels/remainingCounts));
+                       remainingCounts -= c;
+                       remainingPixels -= countwidth;
+                       return countwidth;
+                     }).reverse();
+      }
+      function addToDisplayHisto(histo, wordcountpairs) {
+        $.each(pixelwidths(wordcountpairs), function(i,pixelwidth) {
+                 histo.append(
+                   $.divWithClass("slug").css(
+                     {"background-color": colors[i%5],
+                      "width": pixelwidth+"px"}
+                   ).attr("title", $.fst(wordcountpairs[i]))
+                 )
+               });
+      }
+      function addToDisplayFanout(fanout, word, wordcountpairs) {
+        var widths = pixelwidths(wordcountpairs);
+        var i = $.inArray(word, $.map(wordcountpairs, $.fst));
+        var pre = $.sum(widths.slice(0,i));
+        var post = $.sum(widths.slice(i+1));
+        var current = widths[i];
+        fanout.css(
+          {"width": (current+"px"),
+           "height": "0px",
+           "border-left-width": (pre+"px"),
+           "border-right-width": (post+"px"),
+           "border-bottom-color": colors[i%5]}
+        );
+      }
+      function pushToDisplay(word, wordcountpairs) {
+        var wordstat = $.divWithClass("word-stat");
+        var wordviz = $.divWithClass("less-math");
+        wordviz.append(word);
+
+        var statviz = $.divWithClass("more-math");
+        wordstat.append(wordviz);
+        wordstat.append(statviz);
+
+        var histo = $.divWithClass("histo");
+        var fanout = $.divWithClass("fanout");
+        statviz.append(histo);
+        statviz.append(fanout);
+
+        addToDisplayHisto(histo, wordcountpairs);
+        addToDisplayFanout(fanout, word, wordcountpairs);
+        $("#vessel").append(wordstat);
+      }
+      function popFromDisplayK(k) {
+        var last = $("#vessel .word-stat").last();
+        last.hide("highlight", {}, 200, function() { last.remove(); k(); });
+      }
+      function timeToStop() {
+        return $("#vessel .word-stat").length == 200 || $(".ui-autocomplete:visible").length > 0;
+      }
+      function start() {
+        $("#toggle-histo-visibility").show();
+        var val = function(id) { return $("#"+id).val() }
+        writeNextWordK(val("word-a"), val("word-b"), val("word-c"), val("word-d"), val("usgb"), val("year"),
+                       $("input:radio[name=picking]:checked").val() == $("#randomized").val(),
+                       function() { pushToDisplay("Hm, couldn't start with your prompt.  Try something else?",[]) });
+      }
+      window.onload = function(){
+        $("input[type=text]").each(function(i,elem) { $(elem).autocomplete({'delay': 50, 'source': '/autocomplete', 'minLength': 1}) });
+        <% if good_to_go %>
+          start()
+        <% end %>
+      }
+    </script>
+    <title>Markov-chains of text, US/UK, through the centuries</title>
+  </head>
+  <body>
+    <h1>Markov-chain text generation</h1>
+    <h2>Using 5-gram statistics over two countries and four centuries!</h2>
+    <form id="starting-point">
+      <div id="spatiotemporal-inputs">
+        In the
+        <select id="usgb" name="usgb">
+          <option <% if params['usgb'] != 'gb' %> selected="selected" <% end %> value="us">US</option>
+          <option <% if params['usgb'] == 'gb' %> selected="selected" <% end %> value="gb">GB</option>
+        </select>
+        during
+        <select id="year" name="year">
+          <option value="0" <% if params['year'] == "0" %> selected="selected" <% end %> >Pre-1800s</option>
+          <option value="1" <% if params['year'] == "1" %> selected="selected" <% end %> >1800s</option>
+          <option value="2" <% if params['year'] == "2" %> selected="selected" <% end %> >1900-1950</option>
+          <option value="3" <% if !['0','1','2'].include?(params['year']) %> selected="selected" <% end %> >1951-2000s</option>
+        </select>,
+        picking words
+        <input type="radio" <% if params['picking'] != 'popular' %> checked <% end %> name="picking" value="random" id="randomized"><label for="randomized">randomly</label>
+        /
+        <input type="radio" <% if params['picking'] == 'popular' %> checked <% end %> name="picking" value="popular" id="popularized"><label for="popularized">most popular first</label>,
+        start with:
+      </div>
+      <div id="ngram-inputs">
+        <input type="text" name="a" id="word-a" placeholder="Word 1" value="<%= params['a'] %>">
+        <input type="text" name="b" id="word-b" placeholder="Word 2" value="<%= params['b'] %>">
+        <input type="text" name="c" id="word-c" placeholder="Word 3" value="<%= params['c'] %>">
+        <input type="text" name="d" id="word-d" placeholder="Word 4" value="<%= params['d'] %>">
+        <input type="submit" value="Start"/>
+      </div>
+    </form>
+    <div id="toggle-histo-visibility" style="display: none">
+      <input type="checkbox" onchange="$('#vessel').toggleClass('more-math')" id="math-toggle"><label for="math-toggle">Visualize word probabilities</label>
+    </div>
+    <div id="vessel"></div>
+  </body>
+</html>
